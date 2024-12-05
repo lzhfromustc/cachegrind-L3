@@ -37,15 +37,15 @@
 */
 
 typedef struct {
-   Int          size;                   /* bytes */
-   Int          assoc;
-   Int          line_size;              /* bytes */
-   Int          sets;
-   Int          sets_min_1;
-   Int          line_size_bits;
-   Int          tag_shift;
-   HChar        desc_line[128];         /* large enough */
-   UWord*       tags;
+   Int    size; /* bytes */
+   Int    assoc;
+   Int    line_size; /* bytes */
+   Int    sets;
+   Int    sets_min_1;
+   Int    line_size_bits;
+   Int    tag_shift;
+   HChar  desc_line[128]; /* large enough */
+   UWord* tags;
 } cache_t2;
 
 /* By this point, the size/assoc/line_size has been checked. */
@@ -63,15 +63,14 @@ static void cachesim_initcache(cache_t config, cache_t2* c)
    c->tag_shift      = c->line_size_bits + VG_(log2)(c->sets);
 
    if (c->assoc == 1) {
-      VG_(sprintf)(c->desc_line, "%d B, %d B, direct-mapped", 
-                                 c->size, c->line_size);
+      VG_(sprintf)(c->desc_line, "%d B, %d B, direct-mapped", c->size,
+                   c->line_size);
    } else {
-      VG_(sprintf)(c->desc_line, "%d B, %d B, %d-way associative",
-                                 c->size, c->line_size, c->assoc);
+      VG_(sprintf)(c->desc_line, "%d B, %d B, %d-way associative", c->size,
+                   c->line_size, c->assoc);
    }
 
-   c->tags = VG_(malloc)("cg.sim.ci.1",
-                         sizeof(UWord) * c->sets * c->assoc);
+   c->tags = VG_(malloc)("cg.sim.ci.1", sizeof(UWord) * c->sets * c->assoc);
 
    for (i = 0; i < c->sets * c->assoc; i++)
       c->tags[i] = 0;
@@ -82,12 +81,11 @@ static void cachesim_initcache(cache_t config, cache_t2* c)
  * constant in the caller (the caller is inlined itself).
  * Without inlining of simulator functions, cachegrind can get 40% slower.
  */
-__attribute__((always_inline))
-static __inline__
-Bool cachesim_setref_is_miss(cache_t2* c, UInt set_no, UWord tag)
+__attribute__((always_inline)) static __inline__ Bool
+cachesim_setref_is_miss(cache_t2* c, UInt set_no, UWord tag)
 {
-   int i, j;
-   UWord *set;
+   int    i, j;
+   UWord* set;
 
    set = &(c->tags[set_no * c->assoc]);
 
@@ -119,13 +117,12 @@ Bool cachesim_setref_is_miss(cache_t2* c, UInt set_no, UWord tag)
    return True;
 }
 
-__attribute__((always_inline))
-static __inline__
-Bool cachesim_ref_is_miss(cache_t2* c, Addr a, UChar size)
+__attribute__((always_inline)) static __inline__ Bool
+cachesim_ref_is_miss(cache_t2* c, Addr a, UChar size)
 {
    /* A memory block has the size of a cache line */
-   UWord block1 =  a         >> c->line_size_bits;
-   UWord block2 = (a+size-1) >> c->line_size_bits;
+   UWord block1 = a >> c->line_size_bits;
+   UWord block2 = (a + size - 1) >> c->line_size_bits;
    UInt  set1   = block1 & c->sets_min_1;
 
    /* Tags used in real caches are minimal to save space.
@@ -135,7 +132,7 @@ Bool cachesim_ref_is_miss(cache_t2* c, Addr a, UChar size)
     * But using the memory block as more specific tag is fine,
     * and saves instructions.
     */
-   UWord tag1   = block1;
+   UWord tag1 = block1;
 
    /* Access entirely within line. */
    if (block1 == block2)
@@ -153,68 +150,76 @@ Bool cachesim_ref_is_miss(cache_t2* c, Addr a, UChar size)
       }
       return cachesim_setref_is_miss(c, set2, tag2);
    }
-   VG_(printf)("addr: %lx  size: %u  blocks: %lu %lu",
-               a, size, block1, block2);
+   VG_(printf)("addr: %lx  size: %u  blocks: %lu %lu", a, size, block1, block2);
    VG_(tool_panic)("item straddles more than two cache sets");
    /* not reached */
    return True;
 }
 
-
 static cache_t2 LL;
+static cache_t2 L2;
 static cache_t2 I1;
 static cache_t2 D1;
 
-static void cachesim_initcaches(cache_t I1c, cache_t D1c, cache_t LLc)
+static void
+cachesim_initcaches(cache_t I1c, cache_t D1c, cache_t L2c, cache_t LLc)
 {
    cachesim_initcache(I1c, &I1);
    cachesim_initcache(D1c, &D1);
+   cachesim_initcache(L2c, &L2);
    cachesim_initcache(LLc, &LL);
 }
 
-__attribute__((always_inline))
-static __inline__
-void cachesim_I1_doref_Gen(Addr a, UChar size, ULong* m1, ULong *mL)
+__attribute__((always_inline)) static __inline__ void
+cachesim_I1_doref_Gen(Addr a, UChar size, ULong* m1, ULong* m2, ULong* mL)
 {
    if (cachesim_ref_is_miss(&I1, a, size)) {
       (*m1)++;
-      if (cachesim_ref_is_miss(&LL, a, size))
-         (*mL)++;
+      if (cachesim_ref_is_miss(&L2, a, size)) {
+         (*m2)++;
+         if (cachesim_ref_is_miss(&LL, a, size))
+            (*mL)++;
+      }
    }
 }
 
 // common special case IrNoX
-__attribute__((always_inline))
-static __inline__
-void cachesim_I1_doref_NoX(Addr a, UChar size, ULong* m1, ULong *mL)
+__attribute__((always_inline)) static __inline__ void
+cachesim_I1_doref_NoX(Addr a, UChar size, ULong* m1, ULong* m2, ULong* mL)
 {
    UWord block  = a >> I1.line_size_bits;
    UInt  I1_set = block & I1.sets_min_1;
 
    // use block as tag
+   // can use block as tag as L1I, L2 and LL cache line sizes are equal
    if (cachesim_setref_is_miss(&I1, I1_set, block)) {
-      UInt  LL_set = block & LL.sets_min_1;
+      UInt L2_set = block & L2.sets_min_1;
       (*m1)++;
-      // can use block as tag as L1I and LL cache line sizes are equal
-      if (cachesim_setref_is_miss(&LL, LL_set, block))
-         (*mL)++;
+      if (cachesim_setref_is_miss(&L2, L2_set, block)) {
+         UInt LL_set = block & LL.sets_min_1;
+         (*m2)++;
+         if (cachesim_setref_is_miss(&LL, LL_set, block))
+            (*mL)++;
+      }
    }
 }
 
-__attribute__((always_inline))
-static __inline__
-void cachesim_D1_doref(Addr a, UChar size, ULong* m1, ULong *mL)
+__attribute__((always_inline)) static __inline__ void
+cachesim_D1_doref(Addr a, UChar size, ULong* m1, ULong* m2, ULong* mL)
 {
    if (cachesim_ref_is_miss(&D1, a, size)) {
       (*m1)++;
-      if (cachesim_ref_is_miss(&LL, a, size))
-         (*mL)++;
+      if (cachesim_ref_is_miss(&L2, a, size)) {
+         (*m2)++;
+         if (cachesim_ref_is_miss(&LL, a, size))
+            (*mL)++;
+      }
    }
 }
 
 /* Check for special case IrNoX. Called at instrumentation time.
  *
- * Does this Ir only touch one cache line, and are L1I/LL cache
+ * Does this Ir only touch one cache line, and are L1I/L2/LL cache
  * line sizes the same? This allows to get rid of a runtime check.
  *
  * Returning false is always fine, as this calls the generic case
@@ -223,10 +228,13 @@ static Bool cachesim_is_IrNoX(Addr a, UChar size)
 {
    UWord block1, block2;
 
-   if (I1.line_size_bits != LL.line_size_bits) return False;
-   block1 =  a         >> I1.line_size_bits;
-   block2 = (a+size-1) >> I1.line_size_bits;
-   if (block1 != block2) return False;
+   if (I1.line_size_bits != LL.line_size_bits ||
+       I1.line_size_bits != L2.line_size_bits)
+      return False;
+   block1 = a >> I1.line_size_bits;
+   block2 = (a + size - 1) >> I1.line_size_bits;
+   if (block1 != block2)
+      return False;
 
    return True;
 }
@@ -234,4 +242,3 @@ static Bool cachesim_is_IrNoX(Addr a, UChar size)
 /*--------------------------------------------------------------------*/
 /*--- end                                                 cg_sim.c ---*/
 /*--------------------------------------------------------------------*/
-

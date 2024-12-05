@@ -1,5 +1,7 @@
 *.o
 
+/install
+
 # /
 /.in_place
 /.vs

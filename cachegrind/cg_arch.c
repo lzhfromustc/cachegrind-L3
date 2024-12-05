@@ -29,32 +29,32 @@
 #include "pub_tool_libcassert.h"
 #include "pub_tool_libcbase.h"
 #include "pub_tool_libcprint.h"
-#include "pub_tool_options.h"
 #include "pub_tool_machine.h"
+#include "pub_tool_options.h"
 
 #include "cg_arch.h"
 
-static void configure_caches(cache_t* I1c, cache_t* D1c, cache_t* LLc,
-                             Bool all_caches_clo_defined);
+static void configure_caches(cache_t* I1c,
+                             cache_t* D1c,
+                             cache_t* L2c,
+                             cache_t* LLc,
+                             Bool     all_caches_clo_defined);
 
 // Checks cache config is ok.  Returns NULL if ok, or a pointer to an error
 // string otherwise.
 static const HChar* check_cache(cache_t* cache)
 {
-   if (cache->line_size == 0)
-   {
+   if (cache->line_size == 0) {
       return "Cache line size is zero.\n";
    }
 
-   if (cache->assoc == 0)
-   {
+   if (cache->assoc == 0) {
       return "Cache associativity is zero.\n";
    }
 
    // Simulator requires set count to be a power of two.
    if ((cache->size % (cache->line_size * cache->assoc) != 0) ||
-       (-1 == VG_(log2)(cache->size/cache->line_size/cache->assoc)))
-   {
+       (-1 == VG_(log2)(cache->size / cache->line_size / cache->assoc))) {
       return "Cache set count is not a power of two.\n";
    }
 
@@ -83,26 +83,34 @@ static const HChar* check_cache(cache_t* cache)
    return NULL;
 }
 
-
-static void parse_cache_opt ( cache_t* cache, const HChar* opt,
-                              const HChar* optval )
+static void
+parse_cache_opt(cache_t* cache, const HChar* opt, const HChar* optval)
 {
-   Long i1, i2, i3;
-   HChar* endptr;
+   Long         i1, i2, i3;
+   HChar*       endptr;
    const HChar* checkRes;
 
    // Option argument looks like "65536,2,64".  Extract them.
-   i1 = VG_(strtoll10)(optval,   &endptr); if (*endptr != ',')  goto bad;
-   i2 = VG_(strtoll10)(endptr+1, &endptr); if (*endptr != ',')  goto bad;
-   i3 = VG_(strtoll10)(endptr+1, &endptr); if (*endptr != '\0') goto bad;
+   i1 = VG_(strtoll10)(optval, &endptr);
+   if (*endptr != ',')
+      goto bad;
+   i2 = VG_(strtoll10)(endptr + 1, &endptr);
+   if (*endptr != ',')
+      goto bad;
+   i3 = VG_(strtoll10)(endptr + 1, &endptr);
+   if (*endptr != '\0')
+      goto bad;
 
    // Check for overflow.
    cache->size      = (Int)i1;
    cache->assoc     = (Int)i2;
    cache->line_size = (Int)i3;
-   if (cache->size      != i1) goto overflow;
-   if (cache->assoc     != i2) goto overflow;
-   if (cache->line_size != i3) goto overflow;
+   if (cache->size != i1)
+      goto overflow;
+   if (cache->assoc != i2)
+      goto overflow;
+   if (cache->line_size != i3)
+      goto overflow;
 
    checkRes = check_cache(cache);
    if (checkRes) {
@@ -112,30 +120,32 @@ static void parse_cache_opt ( cache_t* cache, const HChar* opt,
 
    return;
 
-  bad:
+bad:
    VG_(fmsg_bad_option)(opt, "Bad argument '%s'\n", optval);
 
-  overflow:
-   VG_(fmsg_bad_option)(opt,
-      "One of the cache parameters was too large and overflowed.\n");
+overflow:
+   VG_(fmsg_bad_option)(
+      opt, "One of the cache parameters was too large and overflowed.\n");
 }
 
-
-Bool VG_(str_clo_cache_opt)(const HChar *arg,
-                            cache_t* clo_I1c,
-                            cache_t* clo_D1c,
-                            cache_t* clo_LLc)
+Bool VG_(str_clo_cache_opt)(const HChar* arg,
+                            cache_t*     clo_I1c,
+                            cache_t*     clo_D1c,
+                            cache_t*     clo_L2c,
+                            cache_t*     clo_LLc)
 {
    const HChar* tmp_str;
 
-   if      VG_STR_CLO(arg, "--I1", tmp_str) {
+   if VG_STR_CLO (arg, "--I1", tmp_str) {
       parse_cache_opt(clo_I1c, arg, tmp_str);
       return True;
-   } else if VG_STR_CLO(arg, "--D1", tmp_str) {
+   } else if VG_STR_CLO (arg, "--D1", tmp_str) {
       parse_cache_opt(clo_D1c, arg, tmp_str);
       return True;
-   } else if (VG_STR_CLO(arg, "--L2", tmp_str) || // for backwards compatibility
-              VG_STR_CLO(arg, "--LL", tmp_str)) {
+   } else if VG_STR_CLO (arg, "--L2", tmp_str) {
+      parse_cache_opt(clo_L2c, arg, tmp_str);
+      return True;
+   } else if (VG_STR_CLO(arg, "--LLC", tmp_str)) {
       parse_cache_opt(clo_LLc, arg, tmp_str);
       return True;
    } else
@@ -144,29 +154,30 @@ Bool VG_(str_clo_cache_opt)(const HChar *arg,
 
 static void umsg_cache_img(const HChar* desc, cache_t* c)
 {
-   VG_(umsg)("  %s: %'d B, %d-way, %d B lines\n", desc,
-             c->size, c->assoc, c->line_size);
+   VG_(umsg)("  %s: %'d B, %d-way, %d B lines\n", desc, c->size, c->assoc,
+             c->line_size);
 }
 
 // Verifies if c is a valid cache.
 // An invalid value causes an assert, unless clo_redefined is True.
-static void check_cache_or_override(const HChar* desc, cache_t* c, Bool clo_redefined)
+static void
+check_cache_or_override(const HChar* desc, cache_t* c, Bool clo_redefined)
 {
    const HChar* checkRes;
 
    checkRes = check_cache(c);
    if (checkRes) {
-      VG_(umsg)("Auto-detected %s cache configuration not supported: %s",
-                desc, checkRes);
+      VG_(umsg)("Auto-detected %s cache configuration not supported: %s", desc,
+                checkRes);
       umsg_cache_img(desc, c);
       if (!clo_redefined) {
-         VG_(umsg)("As it probably should be supported, please report a bug!\n");
+         VG_(umsg)(
+            "As it probably should be supported, please report a bug!\n");
          VG_(umsg)("Bypass this message by using option --%s=...\n", desc);
          tl_assert(0);
       }
    }
 }
-
 
 /* If the LL cache config isn't something the simulation functions
    can handle, try to adjust it so it is.  Caches are characterised
@@ -206,7 +217,7 @@ static void check_cache_or_override(const HChar* desc, cache_t* c, Bool clo_rede
 
 /* (Helper function) Returns the largest power of 2 that is <= |x|.
    Even works when |x| == 0. */
-static UInt floor_power_of_2 ( UInt x )
+static UInt floor_power_of_2(UInt x)
 {
    x = x | (x >> 1);
    x = x | (x >> 2);
@@ -216,145 +227,154 @@ static UInt floor_power_of_2 ( UInt x )
    return x - (x >> 1);
 }
 
-static void
-maybe_tweak_LLc(cache_t *LLc)
+static void maybe_tweak_LLc(cache_t* LLc)
 {
-  if (LLc->size == 0 || LLc->assoc == 0 || LLc->line_size == 0)
-     return;
+   if (LLc->size == 0 || LLc->assoc == 0 || LLc->line_size == 0)
+      return;
 
-  tl_assert(LLc->size > 0 && LLc->assoc > 0 && LLc->line_size > 0);
+   tl_assert(LLc->size > 0 && LLc->assoc > 0 && LLc->line_size > 0);
 
-  UInt old_size      = (UInt)LLc->size;
-  UInt old_assoc     = (UInt)LLc->assoc;
-  UInt old_line_size = (UInt)LLc->line_size;
+   UInt old_size      = (UInt)LLc->size;
+   UInt old_assoc     = (UInt)LLc->assoc;
+   UInt old_line_size = (UInt)LLc->line_size;
 
-  UInt new_size      = old_size;
-  UInt new_assoc     = old_assoc;
-  UInt new_line_size = old_line_size;
+   UInt new_size      = old_size;
+   UInt new_assoc     = old_assoc;
+   UInt new_line_size = old_line_size;
 
-  UInt old_nSets = old_size / (old_assoc * old_line_size);
-  if (old_nSets == 0) {
-     /* This surely can't happen; but would cause chaos with the maths
-      * below if it did.  Just give up if it does. */
-     return;
-  }
+   UInt old_nSets = old_size / (old_assoc * old_line_size);
+   if (old_nSets == 0) {
+      /* This surely can't happen; but would cause chaos with the maths
+       * below if it did.  Just give up if it does. */
+      return;
+   }
 
-  if (-1 != VG_(log2_64)(old_nSets)) {
-     /* The number of sets is already a power of 2.  Make sure that
-        the size divides exactly between the sets.  Almost all of the
-        time this will have no effect. */
-     new_size = old_line_size * old_assoc * old_nSets;
-  } else {
-     /* The number of sets isn't a power of two.  Calculate some
-        scale-down factor which causes the number of sets to become a
-        power of two.  Then, increase the associativity by that
-        factor.  Finally, re-calculate the total size so as to make
-        sure it divides exactly between the sets. */
-     UInt new_nSets = floor_power_of_2 ( old_nSets );
-     tl_assert(new_nSets > 0 && new_nSets < old_nSets);
-     Double factor = (Double)old_nSets / (Double)new_nSets;
-     tl_assert(factor >= 1.0);
+   if (-1 != VG_(log2_64)(old_nSets)) {
+      /* The number of sets is already a power of 2.  Make sure that
+         the size divides exactly between the sets.  Almost all of the
+         time this will have no effect. */
+      new_size = old_line_size * old_assoc * old_nSets;
+   } else {
+      /* The number of sets isn't a power of two.  Calculate some
+         scale-down factor which causes the number of sets to become a
+         power of two.  Then, increase the associativity by that
+         factor.  Finally, re-calculate the total size so as to make
+         sure it divides exactly between the sets. */
+      UInt new_nSets = floor_power_of_2(old_nSets);
+      tl_assert(new_nSets > 0 && new_nSets < old_nSets);
+      Double factor = (Double)old_nSets / (Double)new_nSets;
+      tl_assert(factor >= 1.0);
 
-     new_assoc = (UInt)(0.5 + factor * (Double)old_assoc);
-     tl_assert(new_assoc >= old_assoc);
+      new_assoc = (UInt)(0.5 + factor * (Double)old_assoc);
+      tl_assert(new_assoc >= old_assoc);
 
-     new_size = old_line_size * new_assoc * new_nSets;
-  }
-  
-  tl_assert(new_line_size == old_line_size); /* we never change this */
-  if (new_size == old_size && new_assoc == old_assoc)
-     return;
+      new_size = old_line_size * new_assoc * new_nSets;
+   }
 
-  VG_(dmsg)("warning: "
-            "specified LL cache: line_size %u  assoc %u  total_size %'u\n",
-            old_line_size, old_assoc, old_size);
-  VG_(dmsg)("warning: "
-            "simulated LL cache: line_size %u  assoc %u  total_size %'u\n",\
-            new_line_size, new_assoc, new_size);
+   tl_assert(new_line_size == old_line_size); /* we never change this */
+   if (new_size == old_size && new_assoc == old_assoc)
+      return;
 
-  LLc->size      = new_size;
-  LLc->assoc     = new_assoc;
-  LLc->line_size = new_line_size;
+   VG_(dmsg)("warning: "
+             "specified LL cache: line_size %u  assoc %u  total_size %'u\n",
+             old_line_size, old_assoc, old_size);
+   VG_(dmsg)("warning: "
+             "simulated LL cache: line_size %u  assoc %u  total_size %'u\n",
+             new_line_size, new_assoc, new_size);
+
+   LLc->size      = new_size;
+   LLc->assoc     = new_assoc;
+   LLc->line_size = new_line_size;
 }
 
 void VG_(post_clo_init_configure_caches)(cache_t* I1c,
                                          cache_t* D1c,
+                                         cache_t* L2c,
                                          cache_t* LLc,
                                          cache_t* clo_I1c,
                                          cache_t* clo_D1c,
+                                         cache_t* clo_L2c,
                                          cache_t* clo_LLc)
 {
-#define DEFINED(L)   (-1 != L->size  || -1 != L->assoc || -1 != L->line_size)
+#define DEFINED(L) (-1 != L->size || -1 != L->assoc || -1 != L->line_size)
 
    // Count how many were defined on the command line.
-   Bool all_caches_clo_defined =
-      (DEFINED(clo_I1c) &&
-       DEFINED(clo_D1c) &&
-       DEFINED(clo_LLc));
+   Bool all_caches_clo_defined = (DEFINED(clo_I1c) && DEFINED(clo_D1c) &&
+                                  DEFINED(clo_L2c) && DEFINED(clo_LLc));
 
    // Set the cache config (using auto-detection, if supported by the
    // architecture).
-   configure_caches( I1c, D1c, LLc, all_caches_clo_defined );
+   configure_caches(I1c, D1c, L2c, LLc, all_caches_clo_defined);
 
-   maybe_tweak_LLc( LLc );
+   maybe_tweak_LLc(LLc);
 
    // Check the default/auto-detected values.
    // Allow the user to override invalid auto-detected caches
    // with command line.
-   check_cache_or_override ("I1", I1c, DEFINED(clo_I1c));
-   check_cache_or_override ("D1", D1c, DEFINED(clo_D1c));
-   check_cache_or_override ("LL", LLc, DEFINED(clo_LLc));
+   check_cache_or_override("I1", I1c, DEFINED(clo_I1c));
+   check_cache_or_override("D1", D1c, DEFINED(clo_D1c));
+   check_cache_or_override("L2", L2c, DEFINED(clo_L2c));
+   check_cache_or_override("LL", LLc, DEFINED(clo_LLc));
 
    // Then replace with any defined on the command line.  (Already checked in
    // VG(str_clo_cache_opt)().)
-   if (DEFINED(clo_I1c)) { *I1c = *clo_I1c; }
-   if (DEFINED(clo_D1c)) { *D1c = *clo_D1c; }
-   if (DEFINED(clo_LLc)) { *LLc = *clo_LLc; }
+   if (DEFINED(clo_I1c)) {
+      *I1c = *clo_I1c;
+   }
+   if (DEFINED(clo_D1c)) {
+      *D1c = *clo_D1c;
+   }
+   if (DEFINED(clo_L2c)) {
+      *L2c = *clo_L2c;
+   }
+   if (DEFINED(clo_LLc)) {
+      *LLc = *clo_LLc;
+   }
 
    if (VG_(clo_verbosity) >= 2) {
       VG_(umsg)("Cache configuration used:\n");
-      umsg_cache_img ("I1", I1c);
-      umsg_cache_img ("D1", D1c);
-      umsg_cache_img ("LL", LLc);
+      umsg_cache_img("I1", I1c);
+      umsg_cache_img("D1", D1c);
+      umsg_cache_img("L2", L2c);
+      umsg_cache_img("LL", LLc);
    }
 #undef DEFINED
 }
 
 void VG_(print_cache_clo_opts)(void)
 {
-   VG_(printf)(
-"    --I1=<size>,<assoc>,<line_size>  set I1 cache manually\n"
-"    --D1=<size>,<assoc>,<line_size>  set D1 cache manually\n"
-"    --LL=<size>,<assoc>,<line_size>  set LL cache manually\n"
-   );
+   VG_(printf)("    --I1=<size>,<assoc>,<line_size>  set I1 cache manually\n"
+               "    --D1=<size>,<assoc>,<line_size>  set D1 cache manually\n"
+               "    --L2=<size>,<assoc>,<line_size>  set L2 cache manually\n"
+               "    --LL=<size>,<assoc>,<line_size>  set LL cache manually\n");
 }
-
 
 // Traverse the cache info and return a cache of the given kind and level.
 // Return NULL if no such cache exists.
-static const VexCache *
-locate_cache(const VexCacheInfo *ci, VexCacheKind kind, UInt level)
+static const VexCache*
+locate_cache(const VexCacheInfo* ci, VexCacheKind kind, UInt level)
 {
-   const VexCache *c;
+   const VexCache* c;
 
    for (c = ci->caches; c != ci->caches + ci->num_caches; ++c) {
       if (c->level == level && c->kind == kind) {
          return c;
       }
    }
-   return NULL;  // not found
+   return NULL; // not found
 }
 
-
-// Gives the auto-detected configuration of I1, D1 and LL caches.  They get
+// Gives the auto-detected configuration of I1, D1, L2 and LL caches.  They get
 // overridden by any cache configurations specified on the command line.
-static void
-configure_caches(cache_t *I1c, cache_t *D1c, cache_t *LLc,
-                 Bool all_caches_clo_defined)
+static void configure_caches(cache_t* I1c,
+                             cache_t* D1c,
+                             cache_t* L2c,
+                             cache_t* LLc,
+                             Bool     all_caches_clo_defined)
 {
-   VexArchInfo vai;
-   const VexCacheInfo *ci;
-   const VexCache *i1, *d1, *ll;
+   VexArchInfo         vai;
+   const VexCacheInfo* ci;
+   const VexCache *    i1, *d1, *l2, *ll;
 
    VG_(machine_get_VexArchInfo)(NULL, &vai);
    ci = &vai.hwcache_info;
@@ -362,6 +382,7 @@ configure_caches(cache_t *I1c, cache_t *D1c, cache_t *LLc,
    // Extract what we need
    i1 = locate_cache(ci, INSN_CACHE, 1);
    d1 = locate_cache(ci, DATA_CACHE, 1);
+   l2 = locate_cache(ci, L2_CACHE, 1);
    ll = locate_cache(ci, UNIFIED_CACHE, ci->num_levels);
 
    if (ci->num_caches > 0 && ll == NULL) {
@@ -370,10 +391,11 @@ configure_caches(cache_t *I1c, cache_t *D1c, cache_t *LLc,
 
    if (ll && ci->num_levels > 2) {
       VG_(dmsg)("warning: L%u cache found, using its data for the "
-                "LL simulation.\n", ci->num_levels);
+                "LL simulation.\n",
+                ci->num_levels);
    }
 
-   if (i1 && d1 && ll) {
+   if (i1 && d1 && l2 && ll) {
       if (i1->is_trace_cache) {
          /* HACK ALERT: Instruction trace cache -- capacity is micro-ops based.
           * conversion to byte size is a total guess;  treat the 12K and 16K
@@ -387,17 +409,19 @@ configure_caches(cache_t *I1c, cache_t *D1c, cache_t *LLc,
          } else {
             adjusted_size = 32 * 1024;
          }
-         VG_(dmsg)("warning: Pentium 4 with %u KB micro-op instruction trace cache\n",
-                   i1->sizeB / 1024);
+         VG_(dmsg)(
+            "warning: Pentium 4 with %u KB micro-op instruction trace cache\n",
+            i1->sizeB / 1024);
          VG_(dmsg)("         Simulating a %u KB I-cache with %u B lines\n",
                    adjusted_size / 1024, guessed_line_size);
 
-         *I1c = (cache_t) { adjusted_size, i1->assoc, guessed_line_size };
+         *I1c = (cache_t){adjusted_size, i1->assoc, guessed_line_size};
       } else {
-         *I1c = (cache_t) { i1->sizeB, i1->assoc, i1->line_sizeB };
+         *I1c = (cache_t){i1->sizeB, i1->assoc, i1->line_sizeB};
       }
-      *D1c = (cache_t) { d1->sizeB, d1->assoc, d1->line_sizeB };
-      *LLc = (cache_t) { ll->sizeB, ll->assoc, ll->line_sizeB };
+      *D1c = (cache_t){d1->sizeB, d1->assoc, d1->line_sizeB};
+      *L2c = (cache_t){l2->sizeB, l2->assoc, l2->line_sizeB};
+      *LLc = (cache_t){ll->sizeB, ll->assoc, ll->line_sizeB};
 
       return;
    }
@@ -408,31 +432,31 @@ configure_caches(cache_t *I1c, cache_t *D1c, cache_t *LLc,
 #if defined(VGA_ppc32)
 
    // Default cache configuration
-   *I1c = (cache_t) {  65536, 2, 64 };
-   *D1c = (cache_t) {  65536, 2, 64 };
-   *LLc = (cache_t) { 262144, 8, 64 };
+   *I1c = (cache_t){65536, 2, 64};
+   *D1c = (cache_t){65536, 2, 64};
+   *LLc = (cache_t){262144, 8, 64};
 
 #elif defined(VGA_ppc64be) || defined(VGA_ppc64le)
 
    // Default cache configuration
-   *I1c = (cache_t) {  65536, 2, 64 };
-   *D1c = (cache_t) {  65536, 2, 64 };
-   *LLc = (cache_t) { 262144, 8, 64 };
+   *I1c = (cache_t){65536, 2, 64};
+   *D1c = (cache_t){65536, 2, 64};
+   *LLc = (cache_t){262144, 8, 64};
 
 #elif defined(VGA_arm)
 
    // Set caches to default (for Cortex-A8 ?)
-   *I1c = (cache_t) {  16384, 4, 64 };
-   *D1c = (cache_t) {  16384, 4, 64 };
-   *LLc = (cache_t) { 262144, 8, 64 };
+   *I1c = (cache_t){16384, 4, 64};
+   *D1c = (cache_t){16384, 4, 64};
+   *LLc = (cache_t){262144, 8, 64};
 
 #elif defined(VGA_arm64)
 
    // Copy the 32-bit ARM version until such time as we have
    // some real hardware to run on
-   *I1c = (cache_t) {  16384, 4, 64 };
-   *D1c = (cache_t) {  16384, 4, 64 };
-   *LLc = (cache_t) { 262144, 8, 64 };
+   *I1c = (cache_t){16384, 4, 64};
+   *D1c = (cache_t){16384, 4, 64};
+   *LLc = (cache_t){262144, 8, 64};
 
 #elif defined(VGA_s390x)
    //
@@ -453,36 +477,37 @@ configure_caches(cache_t *I1c, cache_t *D1c, cache_t *LLc,
    //     Volume 46, Number 4/5, pp 381-395, July/September 2002
    // (3) The IBM eServer z990 microprocessor
    //     IBM Journal of Research and Development
-   //     Volume 48, Number 3/4, pp 295-309, May/July 2004 
+   //     Volume 48, Number 3/4, pp 295-309, May/July 2004
    // (4) Charles Webb, IBM
    //
    // L2 data is unfortunately incomplete. Otherwise, we could support
    // machines without the ECAG insn by looking at VEX_S390X_MODEL(hwcaps).
 
    // Default cache configuration is z10-EC  (Source: ECAG insn)
-   *I1c = (cache_t) {    65536,  4, 256 };
-   *D1c = (cache_t) {   131072,  8, 256 };
-   *LLc = (cache_t) { 50331648, 24, 256 };
+   *I1c = (cache_t){65536, 4, 256};
+   *D1c = (cache_t){131072, 8, 256};
+   *LLc = (cache_t){50331648, 24, 256};
 
 #elif defined(VGA_mips32) || defined(VGA_nanomips)
 
    // Set caches to default (for MIPS32-r2(mips 74kc))
-   *I1c = (cache_t) {  32768, 4, 32 };
-   *D1c = (cache_t) {  32768, 4, 32 };
-   *LLc = (cache_t) { 524288, 8, 32 };
+   *I1c = (cache_t){32768, 4, 32};
+   *D1c = (cache_t){32768, 4, 32};
+   *LLc = (cache_t){524288, 8, 32};
 
 #elif defined(VGA_mips64)
 
    // Set caches to default (for MIPS64 - 5kc)
-   *I1c = (cache_t) {  32768, 4, 32 };
-   *D1c = (cache_t) {  32768, 4, 32 };
-   *LLc = (cache_t) { 524288, 8, 32 };
+   *I1c = (cache_t){32768, 4, 32};
+   *D1c = (cache_t){32768, 4, 32};
+   *LLc = (cache_t){524288, 8, 32};
 
 #elif defined(VGA_x86) || defined(VGA_amd64)
 
-   *I1c = (cache_t) {  65536, 2, 64 };
-   *D1c = (cache_t) {  65536, 2, 64 };
-   *LLc = (cache_t) { 262144, 8, 64 };
+   *I1c = (cache_t){32768, 8, 64};
+   *D1c = (cache_t){32768, 8, 64};
+   *L2c = (cache_t){1048576, 8, 64};
+   *LLc = (cache_t){8388608, 16, 64};
 
 #else
 
@@ -492,8 +517,8 @@ configure_caches(cache_t *I1c, cache_t *D1c, cache_t *LLc,
 
    if (!all_caches_clo_defined) {
       const HChar warning[] =
-        "Warning: Cannot auto-detect cache config, using defaults.\n"
-        "         Run with -v to see.\n";
+         "Warning: Cannot auto-detect cache config, using defaults.\n"
+         "         Run with -v to see.\n";
       VG_(dmsg)("%s", warning);
    }
 }
