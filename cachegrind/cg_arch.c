@@ -101,6 +101,18 @@ parse_cache_opt(cache_t* cache, const HChar* opt, const HChar* optval)
    if (*endptr != '\0')
       goto bad;
 
+   // Round i1 to the smallest integer that is power of 2 and greater than i1
+   Long result = i1 - 1;
+
+   // Perform bit manipulation to find the next power of 2
+   result |= result >> 1;
+   result |= result >> 2;
+   result |= result >> 4;
+   result |= result >> 8;
+   result |= result >> 16;
+   result |= result >> 32;
+   i1 = result + 1;
+
    // Check for overflow.
    cache->size      = (Int)i1;
    cache->assoc     = (Int)i2;
