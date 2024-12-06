@@ -1602,10 +1602,10 @@ static void cg_fini(Int exitcode)
       VG_(umsg)(fmt, "D1  misses:   ", D_total.m1, Dr_total.m1, Dw_total.m1);
       VG_(umsg)(fmt, "L2  misses:   ", D_total.m2, Dr_total.m2, Dw_total.m2);
       VG_(umsg)(fmt, "LLd misses:   ", D_total.mL, Dr_total.mL, Dw_total.mL);
-      VG_(umsg)("L1_hit: %dllu\n", D_total.a - D_total.m1);
-      VG_(umsg)("L2_hit: %dllu\n", D_total.m1 - D_total.m2);
-      VG_(umsg)("L3_hit: %dllu\n", D_total.m2 - D_total.mL);
-      VG_(umsg)("L3_miss: %dllu\n", D_total.mL);
+      VG_(umsg)("L1_hit: %llu\n", D_total.a - D_total.m1);
+      VG_(umsg)("L2_hit: %llu\n", D_total.m1 - D_total.m2);
+      VG_(umsg)("L3_hit: %llu\n", D_total.m2 - D_total.mL);
+      VG_(umsg)("L3_miss: %llu\n", D_total.mL);
 
       if (0 == D_total.a)
          D_total.a = 1;
